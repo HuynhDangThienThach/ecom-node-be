@@ -8,7 +8,7 @@ const path = require("path");
 const cors = require("cors");
 const { error } = require("console");
 const { type } = require("os");
-
+const stripe = require("stripe")("sk_test_51PA5zsEXMnr0TmR96Dw6UlHW9iuc6zCn6LrIch5XzdvktPUo3zlrAPF5cgmAN09cxsNBgeGdaIPsFATp803t8m8j005IeEPvqL");
 app.use(express.json());
 app.use(cors());
 
@@ -38,6 +38,7 @@ app.post("/upload",upload.single('product'),(req, res) =>{
     res.json({
         success: 1,
         image_url: `http://localhost:${port}/images/${req.file.filename}`
+        // image_url: `http://${process.env.DOMAIN}:${port}/images/${req.file.filename}`
     })
 })
 
@@ -144,6 +145,7 @@ const Users = mongoose.model('Users',{
     }
 })
 
+
 //---Creating Endpoint for registering the user
 app.post('/signup', async (req, res) =>{
     //--- Kiểm tra email đã có trong db chưa
@@ -209,8 +211,8 @@ app.get('/newcollections', async (req, res) =>{
 
 //--- Creating endpoint for popular in women section
 app.get('/popularinwomen', async (req, res) =>{
-    let products = await Product.find({category: "Gia Dụng Bếp"})
-    let popular_in_women = products.slice(0,4);
+    let products = await Product.find({category: "giadungbep"})
+    let popular_in_women = products.slice(1).slice(-8);
     console.log("Popular in women fetched");
     res.send(popular_in_women);
 })
@@ -257,6 +259,66 @@ app.post('/getcart', fetchUser, async (req, res) =>{
     let userData = await Users.findOne({_id: req.user.id})
     res.json(userData.cartData);
 })
+
+//---Schema creating for order model
+const orderSchema = mongoose.model('Order',{
+    userID:{type:String, require:true},
+    items:{type:Array, require:true},
+    amount:{type:Number, require:true},
+    address:{type:Object, require: true},
+    status:{type:String, default:"Processing"},
+    date:{type: Date, default:Date.now()},
+    payment:{type:Boolean, default: false}
+})
+
+// Creating endpoint to placeOrder
+app.post('/place', async (req, res) =>{
+    try{
+        const newOrder = new orderSchema({
+            userId: req.body.userId,
+            items:req.body.items,
+            amount:req.body.amount,
+            address:req.body.address
+        })
+        await newOrder.save();
+        await Users.findByIdAndUpdate(req.body.email,{cartData:{}});
+        const items = req.body.items || []
+        const line_items = items.map((item) => ({
+            price_data: {
+                currency: "vnd",
+                product_data: {
+                    name: item.name,
+                },
+                unit_amount: item.new_price* 1000,
+          },
+          quantity: item.quantity,
+        }))
+
+        line_items.push({
+            price_data:{
+                currency:"vnd",
+                product_data:{
+                    name:"Rỗng"
+                },
+                unit_amount: 0 
+            },
+            quantity:1
+        })
+        // process
+
+        const session = await stripe.checkout.sessions.create({
+            line_items:line_items,
+            mode:'payment',
+            success_url: "http://localhost:3000/success",
+            cancel_url: "http://localhost:3000/cancel"
+        })
+        res.json({success:true, session_url: session.url})
+    }catch (error){
+        console.log(error);
+        res.json({success:false,message:"backend Error"})
+    }
+})
+
 
 app.listen(port, (error)=>{
     if(!error){
